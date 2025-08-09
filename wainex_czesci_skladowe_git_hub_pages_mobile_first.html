@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WAINEX — Części Składowe</title>
+  <meta name="description" content="WAINEX — moduł Części Składowe. Mobilna web‑app z agentem AI do zamówień i integracji z Motowarsztat." />
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body { height: 100%; background: #0a0a0a; color: #e5e7eb; }
+    .card { background:#111213; border:1px solid #1f2937; border-radius: 1rem; box-shadow: 0 10px 25px rgba(0,0,0,.35); }
+    .btn { border-radius: 1rem; padding:.65rem 1rem; border:1px solid #1f2937; background:#0d0d10; }
+    .btn:hover { background:#111318; }
+    .tab { padding:.7rem 1rem; border-radius: 999px; border:1px solid #1f2937; }
+    .tab-active { background:#e5e7eb; color:#0a0a0a; }
+    .chip { border:1px solid #374151; border-radius:999px; padding:.2rem .6rem; font-size:.75rem; }
+    .accent { color:#a7f3d0 }
+    .logo-hex { width: 36px; height: 36px; border-radius: 8px; background: radial-gradient(120% 120% at 15% 15%, #1f2937 0%, #0b0b0c 70%); display:grid; place-items:center; border:1px solid #2b2f37; }
+    .key-mark { width:18px; height:18px; position:relative; }
+    .key-mark:before { content:""; position:absolute; inset:0; border:2px solid #a7f3d0; border-radius:4px; transform: rotate(45deg); }
+    .key-mark:after { content:""; position:absolute; width:10px; height:2px; background:#a7f3d0; bottom:-2px; right:-2px; border-radius:2px; }
+    .input { background:#0c0d0f; border:1px solid #1f2937; border-radius:.8rem; padding:.65rem .9rem; width:100%; color:#e5e7eb; }
+    .input:focus { outline:none; border-color:#a7f3d0; box-shadow: 0 0 0 3px rgba(167,243,208,.12); }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background:#0c0d0f; border:1px solid #1f2937; padding:.15rem .4rem; border-radius:.4rem; font-size:.75rem; }
+    .link { color:#a7f3d0; text-decoration: underline; text-decoration-color:#1f2937; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+  <header class="px-4 pt-3 pb-2 sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-black/50">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="logo-hex"><div class="key-mark"></div></div>
+        <div class="leading-tight">
+          <div class="text-lg font-semibold tracking-tight">WAINEX</div>
+          <div class="text-xs text-gray-400 -mt-0.5">Części Składowe • beta</div>
+        </div>
+      </div>
+      <div class="text-xs text-gray-400 hidden sm:block">osamechanik • tryb warsztat</div>
+    </div>
+
+    <nav id="tabs" class="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
+      <!-- tabs will render here -->
+    </nav>
+  </header>
+
+  <main id="view" class="flex-1 px-4 pb-28 pt-2">
+    <!-- views will render here -->
+  </main>
+
+  <footer class="fixed bottom-0 left-0 right-0 border-t border-gray-800 bg-black/60 backdrop-blur">
+    <div class="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between text-xs text-gray-400">
+      <div>© <span id="year"></span> WAINEX • Minimal UI • <span class="accent">AI agent</span> aktywny</div>
+      <div class="hidden sm:flex items-center gap-2">
+        <span class="kbd">/</span> szybkie wyszukiwanie
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // ===== Simple Router / Tabs =====
+    const tabs = [
+      { id: 'home', label: 'Start' },
+      { id: 'search', label: 'Szukaj części' },
+      { id: 'bom', label: 'Części składowe' },
+      { id: 'cart', label: 'Koszyk / Zamówienia' },
+      { id: 'agent', label: 'Agent AI' },
+      { id: 'suppliers', label: 'Hurtownie' },
+      { id: 'integrations', label: 'Integracje' },
+      { id: 'help', label: 'Pomoc' },
+    ];
+
+    const $ = (q, el=document) => el.querySelector(q);
+    const $$ = (q, el=document) => Array.from(el.querySelectorAll(q));
+
+    const state = {
+      parts: [
+        { partNo:'06A-905-115D', name:'Cewka zapłonowa', brand:'Bosch', quality:'OE', price:149.00, supplier:'Auto Partner', stock:7 },
+        { partNo:'1K0-615-301M', name:'Tarcza hamulcowa przód', brand:'ATE', quality:'OE', price:229.00, supplier:'MekoNomen', stock:12 },
+        { partNo:'4F0-254-400', name:'Tłumik środkowy', brand:'Walker', quality:'Q', price:399.00, supplier:'Auto Partner', stock:3 },
+        { partNo:'03L-109-243F', name:'Napinacz paska', brand:'INA', quality:'OE', price:189.00, supplier:'MekoNomen', stock:9 },
+      ],
+      bom: [
+        { group:'Układ hamulcowy', items:[
+          { partNo:'1K0-615-301M', name:'Tarcza hamulcowa przód', qty:2 },
+          { partNo:'1K0-698-151J', name:'Klocki hamulcowe przód', qty:1 },
+          { partNo:'N-101-015-01', name:'Śruby zacisku', qty:4 },
+        ]},
+        { group:'Układ zapłonowy', items:[
+          { partNo:'06A-905-115D', name:'Cewka zapłonowa', qty:4 },
+          { partNo:'101-905-631H', name:'Świece zapłonowe', qty:4 },
+        ]}
+      ],
+      cart: JSON.parse(localStorage.getItem('wainex_cart')||'[]'),
+      suppliers: JSON.parse(localStorage.getItem('wainex_suppliers')||JSON.stringify({
+        'Auto Partner': { cutoff:'11:00', remind:true, endpoint:'', token:'' },
+        'MekoNomen': { cutoff:'10:00', remind:true, endpoint:'', token:'' },
+      })),
+      integrations: JSON.parse(localStorage.getItem('wainex_integrations')||JSON.stringify({
+        motowarsztat: { endpoint:'', apiKey:'', defaultMechanic:'', defaultStatus:'Nowe' }
+      })),
+      voice: { enabled:false, active:false }
+    };
+
+    const save = () => {
+      localStorage.setItem('wainex_cart', JSON.stringify(state.cart));
+      localStorage.setItem('wainex_suppliers', JSON.stringify(state.suppliers));
+      localStorage.setItem('wainex_integrations', JSON.stringify(state.integrations));
+    };
+
+    const money = v => new Intl.NumberFormat('pl-PL', { style:'currency', currency:'PLN' }).format(v);
+
+    // ===== Render Tabs =====
+    function renderTabs(){
+      const nav = $('#tabs');
+      nav.innerHTML = '';
+      tabs.forEach(t => {
+        const btn = document.createElement('button');
+        btn.className = 'tab whitespace-nowrap';
+        btn.id = 'tab-'+t.id;
+        btn.textContent = t.label;
+        btn.onclick = () => go(t.id);
+        nav.appendChild(btn);
+      });
+      highlightTab(location.hash.replace('#','')||'home');
+    }
+
+    function highlightTab(id){
+      $$('.tab').forEach(b=>b.classList.remove('tab-active'));
+      const act = $('#tab-'+id); if(act) act.classList.add('tab-active');
+    }
+
+    // ===== Views =====
+    const views = {
+      home(){
+        return `
+        <section class="card p-4">
+          <h1 class="text-xl font-semibold">Witaj w WAINEX — Części Składowe</h1>
+          <p class="mt-2 text-gray-300">Lekka aplikacja webowa (mobile‑first) do wyszukiwania, składania i wysyłania zamówień z pomocą <span class="accent">agenta AI</span> oraz dodawania zleceń do systemów typu Motowarsztat.</p>
+          <ul class="mt-3 text-sm grid gap-2">
+            <li class="chip">Skrót: naciśnij <span class="kbd">/</span> by skupić się na wyszukiwaniu.</li>
+            <li class="chip">Głos: powiedz „Wyślij zamówienie” lub „Zaczekaj” (beta).</li>
+            <li class="chip">5 min przed terminem zamówień pojawi się inteligentne przypomnienie.</li>
+          </ul>
+          <div class="mt-4 flex gap-2">
+            <button class="btn" onclick="go('search')">Szukaj części</button>
+            <button class="btn" onclick="go('suppliers')">Skonfiguruj hurtownie</button>
+          </div>
+        </section>`
+      },
+      search(){
+        return `
+        <section class="card p-4">
+          <div class="flex items-center gap-2">
+            <input id="q" class="input" placeholder="Szukaj po numerze części lub nazwie… (np. 06A-905-115D, tarcza)" />
+            <button class="btn" onclick="doSearch()">Szukaj</button>
+          </div>
+          <div id="searchResults" class="mt-4 grid gap-2"></div>
+        </section>`
+      },
+      bom(){
+        const groups = state.bom.map(g => `
+          <div class="card p-4">
+            <div class="font-semibold">${g.group}</div>
+            <div class="mt-2 grid gap-2">
+              ${g.items.map(i => `
+                <div class="flex items-center justify-between bg-black/30 border border-gray-800 rounded-xl p-2">
+                  <div>
+                    <div class="font-medium">${i.name}</div>
+                    <div class="text-xs text-gray-400">${i.partNo} • ilość: ${i.qty}</div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button class="btn" onclick="addToCartByPart('${i.partNo}', ${i.qty})">Dodaj</button>
+                    <button class="btn" onclick="go('search'); setTimeout(()=>{ $('#q').value='${i.partNo}'; doSearch(); }, 50)">Szczegóły</button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `).join('');
+        return `<section class="grid gap-3">${groups}</section>`
+      },
+      cart(){
+        const items = state.cart.map((c,idx)=>`
+          <div class="flex items-center justify-between bg-black/30 border border-gray-800 rounded-xl p-2">
+            <div>
+              <div class="font-medium">${c.name} <span class="text-xs text-gray-400">x${c.qty}</span></div>
+              <div class="text-xs text-gray-400">${c.partNo} • ${c.brand} • ${c.quality} • ${c.supplier}</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="text-sm">${money(c.price*c.qty)}</div>
+              <button class="btn" onclick="decQty(${idx})">-</button>
+              <button class="btn" onclick="incQty(${idx})">+</button>
+              <button class="btn" onclick="removeItem(${idx})">Usuń</button>
+            </div>
+          </div>
+        `).join('');
+        const total = state.cart.reduce((s,i)=>s+i.price*i.qty,0);
+        return `
+          <section class="grid gap-3">
+            <div class="card p-4">
+              <div class="font-semibold mb-2">Pozycje w koszyku</div>
+              ${items || '<div class="text-gray-400">Koszyk jest pusty.</div>'}
+              <div class="mt-3 flex items-center justify-between">
+                <div class="text-sm text-gray-300">Suma: <span class="font-semibold">${money(total)}</span></div>
+                <div class="flex gap-2">
+                  <button class="btn" onclick="sendOrders()">Wyślij zamówienie</button>
+                  <button class="btn" onclick="state.cart=[]; save(); go('cart')">Wyczyść</button>
+                </div>
+              </div>
+            </div>
+          </section>`
+      },
+      agent(){
+        return `
+        <section class="grid gap-3">
+          <div class="card p-4">
+            <div class="font-semibold">Agent AI — asysta zamówień</div>
+            <p class="text-sm text-gray-300 mt-1">Agent automatycznie dobiera hurtownię po jakości i cenie, pilnuje godzin granicznych i potwierdza wysyłkę. Komendy głosowe: <em>„Wyślij zamówienie”</em>, <em>„Zaczekaj”</em>.</p>
+            <div class="mt-3 flex items-center gap-2">
+              <button class="btn" onclick="toggleVoice()">${state.voice.active? 'Wyłącz nasłuch' : 'Włącz nasłuch'}</button>
+              <span id="voiceStatus" class="text-xs text-gray-400">${state.voice.active? 'nasłuch aktywny' : 'nieaktywny'}</span>
+            </div>
+          </div>
+
+          <div class="card p-4">
+            <div class="font-semibold">Symulacja decyzji agenta</div>
+            <div class="text-sm text-gray-300 mt-1">Kliknij, by zobaczyć, jak agent wybiera dostawcę i przygotowuje zamówienie.</div>
+            <div class="mt-3 flex gap-2">
+              <button class="btn" onclick="previewOrderPlan()">Pokaż plan</button>
+              <button class="btn" onclick="sendOrders()">Wyślij teraz</button>
+            </div>
+            <pre id="agentLog" class="mt-3 text-xs bg-black/40 p-3 rounded-xl border border-gray-800 overflow-auto"></pre>
+          </div>
+        </section>`
+      },
+      suppliers(){
+        const cards = Object.entries(state.suppliers).map(([name, cfg])=>`
+          <div class="card p-4 grid gap-2">
+            <div class="flex items-center justify-between">
+              <div class="font-semibold">${name}</div>
+              <span class="chip">Godzina graniczna: ${cfg.cutoff}</span>
+            </div>
+            <label class="text-sm">Endpoint API (POST)
+              <input class="input mt-1" value="${cfg.endpoint||''}" onchange="updSupplier('${name}','endpoint', this.value)" placeholder="https://api.twojahurtownia.pl/order"/>
+            </label>
+            <label class="text-sm">Token / API Key
+              <input class="input mt-1" value="${cfg.token||''}" onchange="updSupplier('${name}','token', this.value)" placeholder="sekretny-token"/>
+            </label>
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-2 text-sm"><input type="checkbox" ${cfg.remind? 'checked':''} onchange="updSupplier('${name}','remind', this.checked)"/> Przypominaj 5 min przed</label>
+              <label class="text-sm">Godzina
+                <input class="input mt-1" value="${cfg.cutoff}" onchange="updSupplier('${name}','cutoff', this.value)" placeholder="11:00"/>
+              </label>
+            </div>
+          </div>
+        `).join('');
+        return `<section class="grid gap-3">${cards}</section>`
+      },
+      integrations(){
+        const m = state.integrations.motowarsztat;
+        return `
+          <section class="grid gap-3">
+            <div class="card p-4">
+              <div class="font-semibold">Motowarsztat (lub podobny)</div>
+              <div class="grid gap-2 mt-2">
+                <label class="text-sm">Endpoint API (POST)
+                  <input class="input mt-1" value="${m.endpoint}" onchange="updIntegration('motowarsztat','endpoint', this.value)" placeholder="https://twoj-motowarsztat.pl/api/orders"/>
+                </label>
+                <label class="text-sm">API Key
+                  <input class="input mt-1" value="${m.apiKey}" onchange="updIntegration('motowarsztat','apiKey', this.value)" placeholder="sekretny-klucz"/>
+                </label>
+                <div class="grid sm:grid-cols-2 gap-2">
+                  <label class="text-sm">Domyślny mechanik
+                    <input class="input mt-1" value="${m.defaultMechanic}" onchange="updIntegration('motowarsztat','defaultMechanic', this.value)" placeholder="np. Kamil"/>
+                  </label>
+                  <label class="text-sm">Domyślny status
+                    <input class="input mt-1" value="${m.defaultStatus}" onchange="updIntegration('motowarsztat','defaultStatus', this.value)" placeholder="Nowe"/>
+                  </label>
+                </div>
+              </div>
+              <div class="mt-3 flex gap-2">
+                <button class="btn" onclick="demoJobCreate()">Dodaj zlecenie (demo)</button>
+              </div>
+              <pre id="intLog" class="mt-3 text-xs bg-black/40 p-3 rounded-xl border border-gray-800 overflow-auto"></pre>
+            </div>
+          </section>`
+      },
+      help(){
+        return `
+        <section class="card p-4">
+          <div class="font-semibold">Jak wdrożyć na GitHub Pages</div>
+          <ol class="list-decimal ml-6 mt-2 text-sm text-gray-300 grid gap-1">
+            <li>Utwórz repozytorium (np. <strong>wainex-czesci</strong>) i dodaj ten plik <strong>index.html</strong>.</li>
+            <li>W GitHub: <em>Settings → Pages → Build and deployment</em>: Source: <strong>Deploy from a branch</strong>, Branch: <strong>main</strong>, folder: <strong>/ (root)</strong>.</li>
+            <li>Zapisz. Po ~1–2 min strona będzie dostępna pod adresem <em>https://osamechanik.github.io/wainex-czesci/</em>.</li>
+          </ol>
+          <p class="mt-3 text-sm text-gray-400">Opcjonalnie: ustaw własną domenę i HTTPS.</p>
+        </section>`
+      }
+    };
+
+    // ===== Router =====
+    function go(id){
+      location.hash = id;
+      render();
+    }
+    function render(){
+      const id = location.hash.replace('#','') || 'home';
+      highlightTab(id);
+      const el = $('#view');
+      el.innerHTML = (views[id]||views.home)();
+      if(id==='search'){ setTimeout(()=>$('#q')?.focus(), 50); }
+    }
+
+    // ===== Search =====
+    function doSearch(){
+      const q = $('#q').value.trim().toLowerCase();
+      const results = state.parts.filter(p=> p.partNo.toLowerCase().includes(q) || p.name.toLowerCase().includes(q));
+      const box = $('#searchResults');
+      if(!results.length){ box.innerHTML = '<div class="text-gray-400">Brak wyników.</div>'; return; }
+      box.innerHTML = results.map(p=>`
+        <div class="flex items-center justify-between bg-black/30 border border-gray-800 rounded-xl p-2">
+          <div>
+            <div class="font-medium">${p.name}</div>
+            <div class="text-xs text-gray-400">${p.partNo} • ${p.brand} • ${p.quality} • ${p.supplier} • stan: ${p.stock}</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="text-sm">${money(p.price)}</div>
+            <button class="btn" onclick="addToCart('${p.partNo}')">Dodaj</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function addToCart(partNo){
+      const p = state.parts.find(x=>x.partNo===partNo);
+      if(!p) return;
+      const exist = state.cart.find(x=>x.partNo===partNo);
+      if(exist){ exist.qty += 1; }
+      else { state.cart.push({...p, qty:1}); }
+      save();
+      toast('Dodano do koszyka.');
+    }
+    function addToCartByPart(partNo, qty){
+      const p = state.parts.find(x=>x.partNo===partNo);
+      if(!p) return; 
+      const exist = state.cart.find(x=>x.partNo===partNo);
+      if(exist){ exist.qty += qty; } else { state.cart.push({...p, qty}); }
+      save();
+      toast('Dodano pozycje z BOM.');
+    }
+    function incQty(i){ state.cart[i].qty++; save(); render(); }
+    function decQty(i){ state.cart[i].qty = Math.max(1, state.cart[i].qty-1); save(); render(); }
+    function removeItem(i){ state.cart.splice(i,1); save(); render(); }
+
+    // ===== Agent: supplier choice and order sending =====
+    function chooseSupplierFor(item){
+      // Very simple heuristic: prefer OE, then lowest price; tie-break by supplier cutoff proximity
+      const options = state.parts.filter(p=>p.partNo===item.partNo);
+      if(!options.length) return item.supplier||'Auto Partner';
+      options.sort((a,b)=>{
+        const qualScore = (q)=> q==='OE'?0 : q==='Q'?1:2;
+        const qa = qualScore(a.quality) - qualScore(b.quality);
+        if(qa!==0) return qa;
+        if(a.price!==b.price) return a.price - b.price;
+        const ca = cutoffMinutes(a.supplier), cb = cutoffMinutes(b.supplier);
+        return ca - cb;
+      });
+      return options[0].supplier;
+    }
+
+    function cutoffMinutes(supplier){
+      const cfg = state.suppliers[supplier];
+      if(!cfg) return 24*60;
+      const [h,m] = (cfg.cutoff||'23:59').split(':').map(n=>parseInt(n,10)||0);
+      const now = new Date();
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+      return Math.max(0, Math.round((d - now)/60000));
+    }
+
+    async function previewOrderPlan(){
+      const plan = buildOrderPayloads();
+      $('#agentLog').textContent = JSON.stringify(plan, null, 2);
+      toast('Plan gotowy.');
+    }
+
+    function buildOrderPayloads(){
+      const grouped = {};
+      state.cart.forEach(it=>{
+        const supplier = chooseSupplierFor(it);
+        (grouped[supplier]||(grouped[supplier]=[])).push(it);
+      });
+      const payloads = Object.entries(grouped).map(([supplier, items])=>({
+        supplier,
+        endpoint: state.suppliers[supplier]?.endpoint || '(brak — tryb demo)',
+        headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${state.suppliers[supplier]?.token||''}` },
+        body: {
+          orderId: 'WAI-'+Date.now(),
+          createdAt: new Date().toISOString(),
+          workshop: 'WAINEX / osamechanik',
+          items: items.map(i=>({ partNo:i.partNo, name:i.name, qty:i.qty, unitPrice:i.price }))
+        }
+      }));
+      return payloads;
+    }
+
+    async function sendOrders(){
+      if(!state.cart.length){ toast('Koszyk pusty.'); return; }
+      const payloads = buildOrderPayloads();
+      let sent = 0; let demo = 0; let errors = 0;
+      for(const p of payloads){
+        if(p.endpoint && p.endpoint.startsWith('http')){
+          try{
+            await fetch(p.endpoint, { method:'POST', headers:p.headers, body: JSON.stringify(p.body) });
+            sent++;
+          }catch(e){ errors++; console.error(e); }
+        } else { demo++; console.log('DEMO ORDER =>', p); }
+      }
+      if($('#agentLog')) $('#agentLog').textContent = JSON.stringify(payloads, null, 2);
+      toast(`Wysłano: ${sent}, demo: ${demo}, błędy: ${errors}`);
+    }
+
+    // ===== Integrations: Motowarsztat-like =====
+    async function demoJobCreate(){
+      const m = state.integrations.motowarsztat;
+      const job = {
+        id: 'JOB-'+Date.now(),
+        createdAt: new Date().toISOString(),
+        vehicle: { reg:'WX12345', vin:'VF1ABCDEF12345678', make:'VW', model:'Passat B6', year:2008 },
+        customer: { name:'Jan Kowalski', phone:'+48 600 000 000' },
+        work: [ 'Wymiana tarcz i klocków', 'Diagnostyka EGR' ],
+        parts: state.cart.map(i=>({ partNo:i.partNo, name:i.name, qty:i.qty, price:i.price })),
+        totals: { sum: state.cart.reduce((s,i)=>s+i.qty*i.price,0) },
+        status: m.defaultStatus||'Nowe',
+        mechanic: m.defaultMechanic||''
+      };
+      const log = $('#intLog');
+      if(m.endpoint && m.endpoint.startsWith('http')){
+        try{
+          const res = await fetch(m.endpoint, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${m.apiKey||''}` }, body: JSON.stringify(job) });
+          log.textContent = 'Wysłano do Motowarsztat: '+res.status;
+        }catch(e){ log.textContent = 'Błąd: '+e.message; }
+      } else {
+        log.textContent = 'TRYB DEMO — podaj endpoint, by wysyłać prawdziwe zlecenia.\n'+JSON.stringify(job,null,2);
+      }
+    }
+
+    function updSupplier(name, key, val){ state.suppliers[name][key]=val; save(); render(); }
+    function updIntegration(name, key, val){ state.integrations[name][key]=val; save(); }
+
+    // ===== Reminders (5 min before cutoff) =====
+    function checkReminders(){
+      const now = new Date();
+      Object.entries(state.suppliers).forEach(([name, cfg])=>{
+        if(!cfg.remind) return;
+        const [h,m] = (cfg.cutoff||'11:00').split(':').map(n=>parseInt(n,10)||0);
+        const cut = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+        const diff = cut - now; // ms
+        if(diff > 0 && diff < 5*60*1000){ // within next 5 minutes
+          toast(`Za 5 minut zamknięcie zamówień: ${name}. Wysłać teraz?`, 6000);
+        }
+      })
+    }
+    setInterval(checkReminders, 30*1000);
+
+    // ===== Voice (Web Speech API) =====
+    let recognizer;
+    function toggleVoice(){
+      if(state.voice.active){ recognizer?.stop(); state.voice.active=false; $('#voiceStatus').textContent='nieaktywny'; return; }
+      if(!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)){
+        toast('Brak wsparcia rozpoznawania mowy w tej przeglądarce.'); return;
+      }
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognizer = new SR();
+      recognizer.lang = 'pl-PL';
+      recognizer.continuous = true; recognizer.interimResults = false;
+      recognizer.onresult = (e)=>{
+        const last = e.results[e.results.length-1][0].transcript.trim().toLowerCase();
+        if(last.includes('wyślij zamówienie')) sendOrders();
+        if(last.includes('zaczekaj')) toast('OK, wstrzymuję wysyłkę.');
+      };
+      recognizer.onend = ()=>{ if(state.voice.active){ recognizer.start(); } };
+      recognizer.start(); state.voice.active=true; $('#voiceStatus').textContent='nasłuch aktywny';
+    }
+
+    // ===== UI helpers =====
+    function toast(msg, dur=2000){
+      const t = document.createElement('div');
+      t.className='fixed bottom-16 left-1/2 -translate-x-1/2 bg-white text-black px-3 py-2 rounded-xl text-sm shadow-xl';
+      t.textContent = msg; document.body.appendChild(t);
+      setTimeout(()=> t.remove(), dur);
+    }
+
+    // ===== Shortcuts =====
+    document.addEventListener('keydown', (e)=>{
+      if(e.key==='/' && !/input|textarea/i.test(document.activeElement.tagName)){ e.preventDefault(); go('search'); setTimeout(()=>$('#q')?.focus(), 50); }
+    });
+
+    // ===== Init =====
+    renderTabs();
+    window.addEventListener('hashchange', render);
+    render();
+    $('#year').textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>
