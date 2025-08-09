@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WAINEX — Asystent Warsztatu (Pro)</title>
+  <meta name="description" content="WAINEX — asystent AI dla warsztatu samochodowego: wyszukiwanie części, koszyk, zamówienia do hurtowni, integracja z Motowarsztat." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body { background:#0a0a0a; color:#e5e7eb; }
+    .card{ background:#111213; border:1px solid #1f2937; border-radius:1rem; box-shadow:0 10px 25px rgba(0,0,0,.35); }
+    .btn{ border-radius:1rem; padding:.65rem 1rem; border:1px solid #1f2937; background:#0d0d10; }
+    .btn:hover{ background:#111318; }
+    .input{ background:#0c0d0f; border:1px solid #1f2937; border-radius:.8rem; padding:.65rem .9rem; width:100%; color:#e5e7eb; }
+    .input:focus{ outline:none; border-color:#a7f3d0; box-shadow:0 0 0 3px rgba(167,243,208,.12); }
+  </style>
+  <!-- React 18 + Babel (dla JSX bez bundlera) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useRef, useState } = React;
+
+    // ===== Seed data =====
+    const seedParts = [
+      { partNo: "06A-905-115D", name: "Cewka zapłonowa", brand: "Bosch", quality: "OE", price: 149.0, supplier: "Auto Partner", stock: 7 },
+      { partNo: "1K0-615-301M", name: "Tarcza hamulcowa przód", brand: "ATE", quality: "OE", price: 229.0, supplier: "MekoNomen", stock: 12 },
+      { partNo: "4F0-254-400", name: "Tłumik środkowy", brand: "Walker", quality: "Q", price: 399.0, supplier: "Auto Partner", stock: 3 },
+      { partNo: "03L-109-243F", name: "Napinacz paska", brand: "INA", quality: "OE", price: 189.0, supplier: "MekoNomen", stock: 9 },
+      { partNo: "1K0-698-151J", name: "Klocki hamulcowe przód", brand: "Textar", quality: "Q", price: 179.0, supplier: "Auto Partner", stock: 14 },
+      { partNo: "101-905-631H", name: "Świece zapłonowe", brand: "NGK", quality: "OE", price: 25.5, supplier: "MekoNomen", stock: 30 }
+    ];
+
+    const seedBOM = [
+      { group: "Układ hamulcowy", items: [
+        { partNo: "1K0-615-301M", name: "Tarcza hamulcowa przód", qty: 2 },
+        { partNo: "1K0-698-151J", name: "Klocki hamulcowe przód", qty: 1 }
+      ]},
+      { group: "Układ zapłonowy", items: [
+        { partNo: "06A-905-115D", name: "Cewka zapłonowa", qty: 4 },
+        { partNo: "101-905-631H", name: "Świece zapłonowe", qty: 4 }
+      ]}
+    ];
+
+    const seedSuppliers = {
+      "Auto Partner": { cutoff:"11:00", remind:true, endpoint:"", token:"" },
+      MekoNomen: { cutoff:"10:00", remind:true, endpoint:"", token:"" }
+    };
+
+    const seedIntegrations = {
+      motowarsztat: { endpoint:"", apiKey:"", defaultMechanic:"", defaultStatus:"Nowe" }
+    };
+
+    // ===== Utils =====
+    const money = v => new Intl.NumberFormat('pl-PL',{style:'currency', currency:'PLN'}).format(v);
+    const cx = (...c) => c.filter(Boolean).join(' ');
+
+    function useLocalState(key, initial){
+      const [v, setV] = useState(()=>{
+        try{ const raw = localStorage.getItem(key); return raw? JSON.parse(raw) : initial; }catch{ return initial }
+      });
+      useEffect(()=>{ try{ localStorage.setItem(key, JSON.stringify(v)); }catch{} }, [key, v]);
+      return [v, setV];
+    }
+
+    const qualityRank = q => q==='OE'?0 : q==='Q'?1 : 2;
+    function cutoffMinutes(cfg){
+      if(!cfg) return 24*60;
+      const [h,m] = (cfg.cutoff||'23:59').split(':').map(n=>parseInt(n,10)||0);
+      const now = new Date();
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+      return Math.max(0, Math.round((d-now)/60000));
+    }
+    function fuzzyIncludes(hay, needle){
+      hay = hay.toLowerCase(); needle = needle.toLowerCase();
+      if(hay.includes(needle)) return true;
+      const toks = needle.split(/\s+/).filter(Boolean);
+      return toks.every(t=>hay.includes(t));
+    }
+
+    // ===== UI atoms =====
+    const Card = ({className, children}) => <div className={cx('card', className)}>{children}</div>;
+    const Btn = ({className, children, ...p}) => <button className={cx('btn text-sm', className)} {...p}>{children}</button>;
+    const Input = ({className, ...p}) => <input className={cx('input text-sm', className)} {...p}/>;
+
+    function App(){
+      const [tab, setTab] = useState('start');
+      const [parts, setParts] = useLocalState('wainex.parts', seedParts);
+      const [bom, setBom] = useLocalState('wainex.bom', seedBOM);
+      const [cart, setCart] = useLocalState('wainex.cart', []);
+      const [suppliers, setSuppliers] = useLocalState('wainex.suppliers', seedSuppliers);
+      const [integrations, setIntegrations] = useLocalState('wainex.integrations', seedIntegrations);
+      const [voiceActive, setVoiceActive] = useState(false);
+      const [toast, setToast] = useState('');
+      const [agentLog, setAgentLog] = useState('');
+      const [q, setQ] = useState('');
+
+      // Shortcuts
+      useEffect(()=>{
+        const h = e => {
+          if(e.key==='/' && !/input|textarea/i.test(document.activeElement?.tagName||'')){
+            e.preventDefault(); setTab('search'); setTimeout(()=>document.getElementById('q')?.focus(),50);
+          }
+        };
+        window.addEventListener('keydown', h); return ()=>window.removeEventListener('keydown', h);
+      },[]);
+
+      // Reminders 5 min before cutoff
+      useEffect(()=>{
+        const t = setInterval(()=>{
+          const now = new Date();
+          Object.entries(suppliers).forEach(([name, cfg])=>{
+            if(!cfg.remind) return;
+            const [h,m] = (cfg.cutoff||'11:00').split(':').map(n=>parseInt(n,10)||0);
+            const cut = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+            const diff = cut - now;
+            if(diff>0 && diff<5*60*1000){
+              setToast(`Za 5 minut zamknięcie zamówień: ${name}. Wysłać teraz?`);
+              setTimeout(()=>setToast(''), 6000);
+            }
+          })
+        }, 30*1000);
+        return ()=>clearInterval(t);
+      }, [suppliers]);
+
+      // AI supplier choice & payload
+      const chooseSupplierFor = (item)=>{
+        const options = parts.filter(p=>p.partNo===item.partNo);
+        if(!options.length) return item.supplier||'Auto Partner';
+        const sorted = [...options].sort((a,b)=>{
+          const qa = qualityRank(a.quality) - qualityRank(b.quality); if(qa!==0) return qa;
+          if(a.price!==b.price) return a.price - b.price;
+          const ca = cutoffMinutes(suppliers[a.supplier]); const cb = cutoffMinutes(suppliers[b.supplier]);
+          return ca - cb;
+        });
+        return sorted[0].supplier;
+      };
+
+      const buildOrderPayloads = () => {
+        const grouped = {};
+        cart.forEach(it=>{ const s = chooseSupplierFor(it); (grouped[s]||(grouped[s]=[])).push(it); });
+        return Object.entries(grouped).map(([supplier, items])=>({
+          supplier,
+          endpoint: suppliers[supplier]?.endpoint || '(brak — demo) ',
+          headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${suppliers[supplier]?.token||''}` },
+          body: {
+            orderId: `WAI-${Date.now()}`,
+            createdAt: new Date().toISOString(),
+            workshop: 'WAINEX / osamechanik',
+            items: items.map(i=>({ partNo:i.partNo, name:i.name, qty:i.qty, unitPrice:i.price }))
+          }
+        }));
+      };
+
+      const sendOrders = async ()=>{
+        if(!cart.length){ setToast('Koszyk pusty.'); setTimeout(()=>setToast(''),1200); return; }
+        const payloads = buildOrderPayloads(); setAgentLog(JSON.stringify(payloads,null,2));
+        let sent=0, demo=0, errors=0;
+        for(const p of payloads){
+          if(p.endpoint && p.endpoint.startsWith('http')){
+            try{ await fetch(p.endpoint, { method:'POST', headers:p.headers, body: JSON.stringify(p.body) }); sent++; }
+            catch(e){ console.error(e); errors++; }
+          } else demo++;
+        }
+        setToast(`Wysłano: ${sent}, demo: ${demo}, błędy: ${errors}`);
+        setTimeout(()=>setToast(''), 2200);
+      };
+
+      const demoJobCreate = async ()=>{
+        const m = integrations.motowarsztat;
+        const job = {
+          id: `JOB-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          vehicle: { reg:'WX12345', vin:'VF1ABCDEF12345678', make:'VW', model:'Passat B6', year:2008 },
+          customer: { name:'Jan Kowalski', phone:'+48 600 000 000' },
+          work: ['Wymiana tarcz i klocków', 'Diagnostyka EGR'],
+          parts: cart.map(i=>({ partNo:i.partNo, name:i.name, qty:i.qty, price:i.price })),
+          totals: { sum: cart.reduce((s,i)=>s+i.qty*i.price,0) },
+          status: m.defaultStatus||'Nowe', mechanic: m.defaultMechanic||''
+        };
+        if(m.endpoint && m.endpoint.startsWith('http')){
+          try{
+            const res = await fetch(m.endpoint, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${m.apiKey||''}` }, body: JSON.stringify(job) });
+            setAgentLog('Motowarsztat: '+res.status);
+          }catch(e){ setAgentLog('Błąd: '+e.message); }
+        } else setAgentLog('TRYB DEMO — podaj endpoint i klucz API, by wysyłać prawdziwe zlecenia.\n'+JSON.stringify(job,null,2));
+      };
+
+      // Voice
+      const recognizerRef = useRef(null);
+      const toggleVoice = ()=>{
+        if(voiceActive){ recognizerRef.current?.stop?.(); setVoiceActive(false); return; }
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if(!SR){ setToast('Brak wsparcia rozpoznawania mowy w tej przeglądarce.'); setTimeout(()=>setToast(''),1500); return; }
+        const rec = new SR(); rec.lang='pl-PL'; rec.continuous=true; rec.interimResults=false;
+        rec.onresult = (e)=>{ const last = e.results[e.results.length-1][0].transcript.trim().toLowerCase(); if(last.includes('wyślij zamówienie')) sendOrders(); if(last.includes('zaczekaj')){ setToast('OK, wstrzymuję wysyłkę.'); setTimeout(()=>setToast(''),1200); } };
+        rec.onend = ()=>{ if(voiceActive) rec.start(); };
+        rec.start(); recognizerRef.current = rec; setVoiceActive(true);
+      };
+
+      // Results & totals
+      const results = useMemo(()=>{
+        const s = q.trim().toLowerCase(); if(!s) return parts; return parts.filter(p=>fuzzyIncludes(`${p.partNo} ${p.name} ${p.brand} ${p.supplier}`, s));
+      }, [q, parts]);
+      const total = useMemo(()=> cart.reduce((s,i)=>s+i.qty*i.price,0), [cart]);
+
+      // Cart ops
+      const addToCart = (p, qty=1)=>{ setCart(c=>{ const i=c.findIndex(x=>x.partNo===p.partNo); if(i>=0){ const cp=[...c]; cp[i]={...cp[i], qty: cp[i].qty+qty}; return cp; } return [...c,{...p, qty}] }); setToast('Dodano do koszyka.'); setTimeout(()=>setToast(''),1200); };
+      const incQty = idx => setCart(c=>c.map((x,i)=>i===idx?{...x, qty:x.qty+1}:x));
+      const decQty = idx => setCart(c=>c.map((x,i)=>i===idx?{...x, qty:Math.max(1,x.qty-1)}:x));
+      const removeIdx = idx => setCart(c=>c.filter((_,i)=>i!==idx));
+
+      // UI
+      return (
+        <div className="min-h-dvh">
+          <header className="sticky top-0 z-30 backdrop-blur bg-black/50 border-b border-gray-900">
+            <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl border border-gray-800 bg-gradient-to-br from-gray-800 to-black grid place-items-center">
+                  <div className="w-4 h-4 rotate-45 border-2 border-emerald-300 rounded-sm relative"><div className="absolute -bottom-1 -right-1 w-3 h-[2px] bg-emerald-300 rounded"></div></div>
+                </div>
+                <div className="leading-tight">
+                  <div className="text-base font-semibold tracking-tight">WAINEX</div>
+                  <div className="text-[11px] text-gray-400 -mt-0.5">Asystent Warsztatu • Pro</div>
+                </div>
+              </div>
+              <nav className="hidden sm:flex gap-2 text-sm">
+                {[["start","Start"],["search","Szukaj części"],["bom","BOM"],["cart","Koszyk"],["agent","Agent AI"],["suppliers","Hurtownie"],["integrations","Integracje"],["help","Pomoc"]].map(([id,label])=> (
+                  <button key={id} className={cx('btn px-3 py-1.5', tab===id && 'bg-gray-100 text-black')} onClick={()=>setTab(id)}>{label}</button>
+                ))}
+              </nav>
+              <div className="text-xs text-gray-400 hidden sm:block">osamechanik • tryb warsztat</div>
+            </div>
+            <div className="sm:hidden px-4 pb-2 flex gap-2 overflow-x-auto">
+              {[["start","Start"],["search","Szukaj części"],["bom","BOM"],["cart","Koszyk"],["agent","Agent AI"],["suppliers","Hurtownie"],["integrations","Integracje"],["help","Pomoc"]].map(([id,label])=> (
+                <button key={id} className={cx('btn px-3 py-1.5', tab===id && 'bg-gray-100 text-black')} onClick={()=>setTab(id)}>{label}</button>
+              ))}
+            </div>
+          </header>
+
+          <main className="mx-auto max-w-6xl px-4 py-4 grid gap-3">
+            {tab==='start' && (
+              <Card className="p-4">
+                <div className="text-lg font-semibold">Witaj w WAINEX — Asystent Warsztatu</div>
+                <p className="mt-1 text-sm text-gray-300">Szybkie wyszukiwanie części, inteligentne zamówienia z pomocą <span className="text-emerald-300">agenta AI</span>, integracja z systemami typu Motowarsztat.</p>
+                <ul className="mt-3 grid gap-1 text-[13px] text-gray-400">
+                  <li>Skrót: naciśnij <kbd className="px-1 border rounded">/</kbd> by przejść do wyszukiwania.</li>
+                  <li>Głos: „Wyślij zamówienie”, „Zaczekaj”.</li>
+                  <li>Przypomnienia: 5 minut przed godziną graniczną hurtowni.</li>
+                </ul>
+                <div className="mt-4 flex gap-2">
+                  <Btn onClick={()=>setTab('search')}>Szukaj części</Btn>
+                  <Btn onClick={()=>setTab('suppliers')}>Skonfiguruj hurtownie</Btn>
+                </div>
+              </Card>
+            )}
+
+            {tab==='search' && (
+              <Card className="p-4">
+                <div className="flex items-center gap-2">
+                  <Input id="q" placeholder="Szukaj po numerze lub nazwie… (np. 06A-905-115D, tarcza)" value={q} onChange={e=>setQ(e.target.value)} />
+                  <Btn onClick={()=>setQ(s=>s.trim())}>Szukaj</Btn>
+                </div>
+                <div className="mt-3 grid gap-2">
+                  {results.length===0 && <div className="text-sm text-gray-400">Brak wyników.</div>}
+                  {results.map(p=> (
+                    <div key={p.partNo+p.brand} className="flex items-center justify-between rounded-xl border border-gray-800 bg-black/30 p-2">
+                      <div>
+                        <div className="font-medium">{p.name}</div>
+                        <div className="text-xs text-gray-400">{p.partNo} • {p.brand} • {p.quality} • {p.supplier} • stan: {p.stock}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm">{money(p.price)}</div>
+                        <Btn onClick={()=>addToCart(p)}>Dodaj</Btn>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            {tab==='bom' && (
+              <div className="grid gap-3">
+                {seedBOM.map(g=> (
+                  <Card key={g.group} className="p-4">
+                    <div className="font-semibold">{g.group}</div>
+                    <div className="mt-2 grid gap-2">
+                      {g.items.map(i=>{ const part = seedParts.find(p=>p.partNo===i.partNo); return (
+                        <div key={i.partNo} className="flex items-center justify-between rounded-xl border border-gray-800 bg-black/30 p-2">
+                          <div>
+                            <div className="font-medium">{i.name}</div>
+                            <div className="text-xs text-gray-400">{i.partNo} • ilość: {i.qty}</div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Btn onClick={()=> part && addToCart(part, i.qty)}>Dodaj</Btn>
+                            <Btn onClick={()=>{ setTab('search'); setQ(i.partNo); }}>Szczegóły</Btn>
+                          </div>
+                        </div>
+                      )})}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {tab==='cart' && (
+              <Card className="p-4">
+                <div className="font-semibold mb-2">Pozycje w koszyku</div>
+                <div className="grid gap-2">
+                  {cart.length===0 && <div className="text-sm text-gray-400">Koszyk jest pusty.</div>}
+                  {cart.map((c,idx)=> (
+                    <div key={c.partNo+idx} className="flex items-center justify-between rounded-xl border border-gray-800 bg-black/30 p-2">
+                      <div>
+                        <div className="font-medium">{c.name} <span className="text-xs text-gray-400">×{c.qty}</span></div>
+                        <div className="text-xs text-gray-400">{c.partNo} • {c.brand} • {c.quality} • {c.supplier}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm">{money(c.price*c.qty)}</div>
+                        <Btn onClick={()=>decQty(idx)}>-</Btn>
+                        <Btn onClick={()=>incQty(idx)}>+</Btn>
+                        <Btn onClick={()=>removeIdx(idx)}>Usuń</Btn>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <div className="text-sm">Suma: <span className="font-semibold">{money(total)}</span></div>
+                  <div className="flex gap-2">
+                    <Btn onClick={sendOrders}>Wyślij zamówienie</Btn>
+                    <Btn onClick={()=>setCart([])}>Wyczyść</Btn>
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {tab==='agent' && (
+              <div className="grid gap-3">
+                <Card className="p-4">
+                  <div className="font-semibold">Agent AI — asysta zamówień</div>
+                  <p className="text-sm text-gray-300 mt-1">Automatyczny wybór hurtowni wg jakości, ceny i czasu. Komendy głosowe, pilnowanie godzin, grupowanie zamówień.</p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <Btn onClick={()=>setAgentLog(JSON.stringify(buildOrderPayloads(),null,2))}>Pokaż plan</Btn>
+                    <Btn onClick={sendOrders}>Wyślij teraz</Btn>
+                    <Btn onClick={toggleVoice}>{voiceActive? 'Wyłącz nasłuch':'Włącz nasłuch'}</Btn>
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <div className="font-semibold">Log / plan agenta</div>
+                  <pre className="mt-2 text-xs bg-black/40 p-3 rounded-xl border border-gray-800 overflow-auto whitespace-pre-wrap">{agentLog}</pre>
+                </Card>
+              </div>
+            )}
+
+            {tab==='suppliers' && (
+              <div className="grid gap-3">
+                {Object.entries(suppliers).map(([name,cfg])=> (
+                  <Card key={name} className="p-4 grid gap-2">
+                    <div className="flex items-center justify-between"><div className="font-semibold">{name}</div><span className="text-xs rounded-full border border-gray-700 px-2 py-0.5">Godzina graniczna: {cfg.cutoff}</span></div>
+                    <label className="text-sm">Endpoint API (POST)
+                      <Input value={cfg.endpoint||''} onChange={e=>setSuppliers(s=>({ ...s, [name]:{ ...s[name], endpoint:e.target.value } }))} placeholder="https://api.twojahurtownia.pl/order" className="mt-1" />
+                    </label>
+                    <label className="text-sm">Token / API Key
+                      <Input value={cfg.token||''} onChange={e=>setSuppliers(s=>({ ...s, [name]:{ ...s[name], token:e.target.value } }))} placeholder="sekretny-token" className="mt-1" />
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!cfg.remind} onChange={e=>setSuppliers(s=>({ ...s, [name]:{ ...s[name], remind:e.target.checked } }))}/> Przypominaj 5 min przed</label>
+                      <label className="text-sm">Godzina
+                        <Input value={cfg.cutoff} onChange={e=>setSuppliers(s=>({ ...s, [name]:{ ...s[name], cutoff:e.target.value } }))} className="mt-1" placeholder="11:00" />
+                      </label>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {tab==='integrations' && (
+              <Card className="p-4">
+                <div className="font-semibold">Motowarsztat (lub podobny)</div>
+                <div className="grid gap-2 mt-2">
+                  <label className="text-sm">Endpoint API (POST)
+                    <Input value={integrations.motowarsztat.endpoint} onChange={e=>setIntegrations(x=>({ ...x, motowarsztat:{ ...x.motowarsztat, endpoint:e.target.value } }))} placeholder="https://twoj-motowarsztat.pl/api/orders" className="mt-1" />
+                  </label>
+                  <label className="text-sm">API Key
+                    <Input value={integrations.motowarsztat.apiKey} onChange={e=>setIntegrations(x=>({ ...x, motowarsztat:{ ...x.motowarsztat, apiKey:e.target.value } }))} placeholder="sekretny-klucz" className="mt-1" />
+                  </label>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <label className="text-sm">Domyślny mechanik
+                      <Input value={integrations.motowarsztat.defaultMechanic} onChange={e=>setIntegrations(x=>({ ...x, motowarsztat:{ ...x.motowarsztat, defaultMechanic:e.target.value } }))} placeholder="np. Kamil" className="mt-1" />
+                    </label>
+                    <label className="text-sm">Domyślny status
+                      <Input value={integrations.motowarsztat.defaultStatus} onChange={e=>setIntegrations(x=>({ ...x, motowarsztat:{ ...x.motowarsztat, defaultStatus:e.target.value } }))} placeholder="Nowe" className="mt-1" />
+                    </label>
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Btn onClick={demoJobCreate}>Dodaj zlecenie (demo)</Btn>
+                </div>
+                <pre className="mt-3 text-xs bg-black/40 p-3 rounded-xl border border-gray-800 overflow-auto whitespace-pre-wrap">{agentLog}</pre>
+              </Card>
+            )}
+
+            {tab==='help' && (
+              <Card className="p-4 text-sm">
+                <div className="font-semibold">Instrukcja wdrożenia (GitHub Pages)</div>
+                <ol className="list-decimal ml-5 mt-2 grid gap-1 text-gray-300">
+                  <li>Skopiuj ten plik jako <b>index.html</b> do repo <b>wainex-czesci</b> (folder główny).</li>
+                  <li>Settings → Pages: Source: <b>Deploy from a branch</b> → Branch: <b>main</b> → folder: <b>/ (root)</b>.</li>
+                  <li>Po 1–2 min aplikacja ruszy pod adresem <i>https://osamechanik.github.io/wainex-czesci/</i>.</li>
+                </ol>
+                <p className="mt-2 text-gray-400">Aby wysyłać prawdziwe zamówienia/zlecenia z przeglądarki, API musi mieć włączony CORS.</p>
+              </Card>
+            )}
+          </main>
+
+          <footer className="sticky bottom-0 border-t border-gray-900 bg-black/60 backdrop-blur">
+            <div className="mx-auto max-w-6xl px-4 py-2 text-xs text-gray-400 flex items-center justify-between">
+              <div>© {new Date().getFullYear()} WAINEX • Minimal UI • <span className="text-emerald-300">AI agent</span> aktywny</div>
+              <div className="hidden sm:block">Build: Single file (React + Babel CDN)</div>
+            </div>
+          </footer>
+
+          {toast && <div className="fixed bottom-16 left-1/2 -translate-x-1/2 bg-white text-black px-3 py-2 rounded-xl text-sm shadow-xl">{toast}</div>}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App/>);
+  </script>
+</body>
+</html>
